@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAGKRIX PayProof — Verify the payment first</title>
+<style>
+  :root { --bg:#0a0e1e; --card:#161d36; --card2:#1e2746; --line:#344069; --text:#f0f4ff; --muted:#96a0be;
+          --green:#22c578; --red:#ef4444; --amber:#f5a623; --blue:#508cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:880px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:28px; margin:0; } h1 span { color:var(--green); }
+  .tag { color:var(--muted); margin:6px 0 24px; }
+  .mode { display:inline-block; font-size:12px; padding:4px 10px; border-radius:99px; background:var(--card2); color:var(--muted); margin-right:6px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px; margin-bottom:18px; }
+  label { display:block; font-size:14px; color:var(--muted); margin:12px 0 6px; }
+  input, textarea, select { width:100%; background:var(--card2); border:1px solid var(--line); color:var(--text); border-radius:10px; padding:10px 12px; font:inherit; }
+  textarea { min-height:120px; resize:vertical; }
+  .row { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; }
+  @media (max-width:640px){ .row{ grid-template-columns:1fr; } }
+  button { margin-top:18px; width:100%; background:var(--green); color:#04140b; border:0; border-radius:12px; padding:14px; font-weight:700; font-size:16px; cursor:pointer; }
+  button:disabled { opacity:.6; }
+  .demo { font-size:13px; color:var(--muted); margin-top:10px; } .demo a { color:var(--blue); cursor:pointer; }
+  .verdict { border-radius:14px; padding:18px; margin-bottom:14px; }
+  .VERIFIED { background:rgba(34,197,120,.12); border:1px solid var(--green); }
+  .MISMATCH { background:rgba(245,166,35,.12); border:1px solid var(--amber); }
+  .UNABLE_TO_VERIFY { background:rgba(150,160,190,.10); border:1px solid var(--muted); }
+  .verdict h2 { margin:0 0 6px; font-size:22px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; } td { padding:6px 0; border-bottom:1px solid var(--card2); }
+  td:first-child { color:var(--muted); width:40%; }
+  ul { padding-left:18px; margin:6px 0; } li { margin:4px 0; }
+  .ok { color:var(--green); } .bad { color:var(--red); } .warn li::marker { color:var(--amber); }
+  .err { color:var(--red); }
+  footer { color:var(--muted); font-size:13px; text-align:center; margin-top:28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>RAGKRIX <span>PayProof</span></h1>
+  <p class="tag">Never ship based on a screenshot. Verify the payment first.</p>
+  <div>
+    <span class="mode">PayPal: {{ paypal_mode }}</span>
+    <span class="mode">AI: {{ "Gemini" if ai_on else "rules (demo)" }}</span>
+  </div>
+
+  <form id="f" class="card" style="margin-top:16px">
+    <label for="file">Payment screenshot, invoice, PDF or email file (optional)</label>
+    <input type="file" id="file" name="file" accept="image/png,image/jpeg,image/webp,application/pdf,text/plain,.eml,.txt">
+    <label for="text">Or paste the payment email / message</label>
+    <textarea id="text" name="text" placeholder="e.g. Hi, I have paid $180.00 via PayPal. Transaction ID: DEMO-VERIFIED-001"></textarea>
+    <div class="row">
+      <div><label for="tid">Transaction ID (if known)</label><input id="tid" name="transaction_id"></div>
+      <div><label for="amt">Amount you expect</label><input id="amt" name="expected_amount" inputmode="decimal"></div>
+      <div><label for="cur">Currency</label>
+        <select id="cur" name="expected_currency"><option value="">Auto</option><option>USD</option><option>INR</option><option>EUR</option><option>GBP</option></select></div>
+    </div>
+    <button id="go" type="submit">Verify payment</button>
+    {% if paypal_mode == "demo" %}
+    <p class="demo">Demo mode — try:
+      <a data-t="Hi, I have paid $180.00 via PayPal. Transaction ID: DEMO-VERIFIED-001">verified</a> ·
+      <a data-t="Payment of $180.00 sent! Transaction ID: DEMO-PARTIAL-002. Please ship today.">mismatch</a> ·
+      <a data-t="URGENT: Your payment of $250.00 is pending and will be released once you ship and upload tracking. From service@paypal-secure-mail.com">fake</a>
+    </p>
+    {% endif %}
+  </form>
+
+  <div id="out"></div>
+  <footer>RAGKRIX PayProof · open source (MIT) · AI analysis is a guide — always confirm funds in your PayPal account.</footer>
+</main>
+<script>
+const f = document.getElementById('f'), out = document.getElementById('out'), go = document.getElementById('go');
+document.querySelectorAll('.demo a').forEach(a => a.onclick = () => {
+  document.getElementById('text').value = a.dataset.t; document.getElementById('tid').value = '';
+  document.getElementById('amt').value = ''; f.requestSubmit();
+});
+const esc = s => String(s ?? '—').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TITLES = {VERIFIED:'✓ Payment verified', MISMATCH:'! Details mismatch', UNABLE_TO_VERIFY:'? Unable to verify'};
+f.onsubmit = async e => {
+  e.preventDefault(); go.disabled = true; go.textContent = 'Analysing…'; out.innerHTML = '';
+  try {
+    const r = await fetch('/api/verify', {method:'POST', body:new FormData(f)});
+    const j = await r.json();
+    if (!r.ok) { out.innerHTML = `<div class="card err">${esc(j.error)}</div>`; return; }
+    const x = j.extracted, p = j.paypal_record;
+    out.innerHTML = `
+      <div class="verdict ${j.verdict}"><h2>${TITLES[j.verdict]}</h2>${esc(j.explanation)}</div>
+      <div class="card"><b>Extracted details</b> <span class="mode">${esc(x.engine)}</span>
+        <table>
+          <tr><td>Amount</td><td>${esc(x.amount)} ${esc(x.currency ?? '')}</td></tr>
+          <tr><td>Transaction ID</td><td>${esc(x.transaction_id)}</td></tr>
+          <tr><td>Sender</td><td>${esc(x.sender_name ?? x.sender_email)}</td></tr>
+          <tr><td>Date</td><td>${esc(x.date)}</td></tr>
+          <tr><td>Platform</td><td>${esc(x.payment_platform)}</td></tr>
+        </table></div>
+      <div class="card"><b>PayPal record</b> <span class="mode">${esc(j.paypal_mode)}</span>
+        ${p ? `<table><tr><td>Amount</td><td>${esc(p.amount)} ${esc(p.currency)}</td></tr>
+                       <tr><td>Status</td><td>${esc(p.status)}</td></tr><tr><td>Date</td><td>${esc(p.date)}</td></tr></table>
+              <ul>${j.checks.map(c => `<li class="${c.passed?'ok':'bad'}">${c.passed?'✓':'✗'} ${esc(c.check)}</li>`).join('')}</ul>`
+            : '<p>No matching transaction found in PayPal.</p>'}</div>
+      ${j.warning_signs.length ? `<div class="card"><b>Warning signs</b><ul class="warn">${j.warning_signs.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}`;
+  } catch (err) { out.innerHTML = `<div class="card err">Request failed: ${esc(err.message)}</div>`; }
+  finally { go.disabled = false; go.textContent = 'Verify payment'; }
+};
+</script>
+</body>
+</html>
